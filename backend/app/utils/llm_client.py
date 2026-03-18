@@ -41,8 +41,23 @@ class LLMClient:
         self._num_ctx = int(os.environ.get('OLLAMA_NUM_CTX', '8192'))
 
     def _is_ollama(self) -> bool:
-        """Check if we're talking to an Ollama server."""
-        return '11434' in (self.base_url or '')
+        """Check if we're talking to an Ollama server.
+
+        Uses explicit LLM_PROVIDER env var if set, otherwise falls back to URL port detection.
+        """
+        # Explicit provider setting takes priority
+        provider = os.environ.get('LLM_PROVIDER', 'auto').lower()
+        if provider == 'ollama':
+            return True
+        if provider in ('openai', 'anthropic', 'other'):
+            return False
+        # Auto-detect: parse URL and check for Ollama's default port
+        from urllib.parse import urlparse
+        try:
+            parsed = urlparse(self.base_url or '')
+            return parsed.port == 11434
+        except Exception:
+            return False
 
     def chat(
         self,

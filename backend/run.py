@@ -25,11 +25,15 @@ from app.config import Config
 def main():
     """Main function"""
     # Validate configuration
-    errors = Config.validate()
+    errors, warnings = Config.validate()
+    if warnings:
+        print("Configuration warnings:")
+        for warn in warnings:
+            print(f"  ⚠ {warn}")
     if errors:
         print("Configuration errors:")
         for err in errors:
-            print(f"  - {err}")
+            print(f"  ✗ {err}")
         print("\nPlease check configuration in .env file")
         sys.exit(1)
 
