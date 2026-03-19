@@ -249,20 +249,38 @@ class ProjectManager:
 
         Returns:
             File information dictionary {filename, path, size}
+
+        Raises:
+            ValueError: If file extension is not allowed or file is too large
         """
+        from ..config import Config
+
+        # Validate file extension
+        ext = os.path.splitext(original_filename)[1].lower().lstrip('.')
+        if ext not in Config.ALLOWED_EXTENSIONS:
+            allowed = ', '.join(sorted(Config.ALLOWED_EXTENSIONS))
+            raise ValueError(
+                f"File type '.{ext}' is not allowed. Allowed types: {allowed}"
+            )
+
         files_dir = cls._get_project_files_dir(project_id)
         os.makedirs(files_dir, exist_ok=True)
 
         # Generate safe filename
-        ext = os.path.splitext(original_filename)[1].lower()
-        safe_filename = f"{uuid.uuid4().hex[:8]}{ext}"
+        safe_filename = f"{uuid.uuid4().hex[:8]}.{ext}"
         file_path = os.path.join(files_dir, safe_filename)
 
         # Save file
         file_storage.save(file_path)
 
-        # Get file size
+        # Validate file size after saving
         file_size = os.path.getsize(file_path)
+        if file_size > Config.MAX_CONTENT_LENGTH:
+            os.remove(file_path)  # Clean up oversized file
+            max_mb = Config.MAX_CONTENT_LENGTH / (1024 * 1024)
+            raise ValueError(
+                f"File size ({file_size} bytes) exceeds maximum allowed size ({max_mb:.0f}MB)"
+            )
 
         return {
             "original_filename": original_filename,

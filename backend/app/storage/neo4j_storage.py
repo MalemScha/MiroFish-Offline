@@ -35,6 +35,19 @@ class Neo4jStorage(GraphStorage):
     MAX_RETRIES = 3
     RETRY_DELAY_BASE = 1  # seconds
 
+    @staticmethod
+    def _sanitize_label(label: str) -> str:
+        """Sanitize a Neo4j label to prevent Cypher injection.
+
+        Only allows alphanumeric chars and underscores. Strips everything else.
+        Raises ValueError if the result is empty.
+        """
+        import re
+        sanitized = re.sub(r'[^A-Za-z0-9_]', '', label)
+        if not sanitized:
+            raise ValueError(f"Invalid label after sanitization: '{label}'")
+        return sanitized
+
     def __init__(
         self,
         uri: Optional[str] = None,
@@ -48,7 +61,10 @@ class Neo4jStorage(GraphStorage):
         self._password = password or Config.NEO4J_PASSWORD
 
         self._driver = GraphDatabase.driver(
-            self._uri, auth=(self._user, self._password)
+            self._uri,
+            auth=(self._user, self._password),
+            max_connection_pool_size=getattr(Config, 'NEO4J_MAX_CONNECTION_POOL_SIZE', 50),
+            connection_acquisition_timeout=getattr(Config, 'NEO4J_CONNECTION_ACQUISITION_TIMEOUT', 60),
         )
         self._embedding = embedding_service or EmbeddingService()
         self._ner = ner_extractor or NERExtractor()
@@ -278,16 +294,19 @@ class Neo4jStorage(GraphStorage):
                 actual_uuid = self._call_with_retry(session.execute_write, _merge_entity)
                 entity_uuid_map[ename.lower()] = actual_uuid
 
-                # Add entity type label
+                # Add entity type label (sanitized to prevent Cypher injection)
                 if etype and etype != "Entity":
                     try:
-                        def _add_label(tx, _name_lower=ename.lower()):
+                        safe_type = self._sanitize_label(etype)
+                        def _add_label(tx, _name_lower=ename.lower(), _safe_type=safe_type):
                             tx.run(
-                                f"MATCH (n:Entity {{graph_id: $gid, name_lower: $nl}}) SET n:`{etype}`",
+                                f"MATCH (n:Entity {{graph_id: $gid, name_lower: $nl}}) SET n:`{_safe_type}`",
                                 gid=graph_id,
                                 nl=_name_lower,
                             )
                         self._call_with_retry(session.execute_write, _add_label)
+                    except ValueError as ve:
+                        logger.warning(f"Skipping invalid label '{etype}' for '{ename}': {ve}")
                     except Exception as e:
                         logger.warning(f"Failed to add label '{etype}' to '{ename}': {e}")
 

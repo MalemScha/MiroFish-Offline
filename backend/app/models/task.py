@@ -70,6 +70,10 @@ class TaskManager:
                     cls._instance._task_lock = threading.Lock()
         return cls._instance
 
+    # Auto-cleanup interval: run cleanup every N task creations
+    _CLEANUP_EVERY_N = 50
+    _MAX_COMPLETED_AGE_HOURS = 1  # Remove completed/failed tasks after 1 hour
+
     def create_task(self, task_type: str, metadata: Optional[Dict] = None) -> str:
         """
         Create new task
@@ -95,8 +99,22 @@ class TaskManager:
 
         with self._task_lock:
             self._tasks[task_id] = task
+            # Auto-cleanup stale tasks periodically
+            if len(self._tasks) % self._CLEANUP_EVERY_N == 0:
+                self._cleanup_stale_locked()
 
         return task_id
+
+    def _cleanup_stale_locked(self):
+        """Remove old completed/failed tasks. Must be called with _task_lock held."""
+        from datetime import timedelta
+        cutoff = datetime.now() - timedelta(hours=self._MAX_COMPLETED_AGE_HOURS)
+        old_ids = [
+            tid for tid, task in self._tasks.items()
+            if task.created_at < cutoff and task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED)
+        ]
+        for tid in old_ids:
+            del self._tasks[tid]
 
     def get_task(self, task_id: str) -> Optional[Task]:
         """Get task"""

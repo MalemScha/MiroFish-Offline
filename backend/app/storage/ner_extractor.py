@@ -85,7 +85,10 @@ class NERExtractor:
                     temperature=0.1,  # Low temp for extraction precision
                     max_tokens=4096,
                 )
-                return self._validate_and_clean(result, ontology)
+                cleaned = self._validate_and_clean(result, ontology)
+                cleaned["success"] = True
+                cleaned["error"] = None
+                return cleaned
 
             except ValueError as e:
                 last_error = e
@@ -101,7 +104,12 @@ class NERExtractor:
         logger.error(
             f"NER extraction failed after {self.max_retries + 1} attempts: {last_error}"
         )
-        return {"entities": [], "relations": []}
+        return {
+            "entities": [],
+            "relations": [],
+            "success": False,
+            "error": str(last_error) if last_error else "Unknown NER extraction error",
+        }
 
     def _format_ontology(self, ontology: Dict[str, Any]) -> str:
         """Format ontology dict into readable text for the LLM prompt."""

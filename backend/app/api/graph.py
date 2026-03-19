@@ -4,12 +4,13 @@ Uses project context mechanism with server-side state persistence
 """
 
 import os
-import traceback
+import logging
 import threading
 from flask import request, jsonify, current_app
 
-from . import graph_bp
+from . import graph_bp, safe_error_response
 from ..config import Config
+logger = logging.getLogger('mirofish.api.graph')
 from ..services.ontology_generator import OntologyGenerator
 from ..services.graph_builder import GraphBuilderService
 from ..services.text_processor import TextProcessor
@@ -62,30 +63,58 @@ def get_project(project_id: str):
 @graph_bp.route('/project/list', methods=['GET'])
 def list_projects():
     """
-    List all projects
+    List all projects (paginated)
+
+    Query params:
+        limit: max items to return (default 50)
+        offset: skip this many items (default 0)
     """
     limit = request.args.get('limit', 50, type=int)
-    projects = ProjectManager.list_projects(limit=limit)
-    
+    offset = request.args.get('offset', 0, type=int)
+    all_projects = ProjectManager.list_projects(limit=limit + offset)
+    paginated = all_projects[offset:offset + limit]
+
     return jsonify({
         "success": True,
-        "data": [p.to_dict() for p in projects],
-        "count": len(projects)
+        "data": [p.to_dict() for p in paginated],
+        "count": len(paginated),
+        "total": len(all_projects),
+        "offset": offset,
+        "limit": limit,
     })
 
 
 @graph_bp.route('/project/<project_id>', methods=['DELETE'])
 def delete_project(project_id: str):
     """
-    Delete project
+    Delete project and its associated Neo4j graph data
     """
+    # Look up the project to get its graph_id before deletion
+    project = ProjectManager.get_project(project_id)
+    if not project:
+        return jsonify({
+            "success": False,
+            "error": f"Project does not exist: {project_id}"
+        }), 404
+
+    # Clean up the Neo4j graph if one was created
+    if project.graph_id:
+        try:
+            storage = current_app.config.get('graph_storage')
+            if storage:
+                storage.delete_graph(project.graph_id)
+                logger.info(f"Deleted Neo4j graph {project.graph_id} for project {project_id}")
+        except Exception as e:
+            logger.warning(f"Failed to delete Neo4j graph {project.graph_id}: {e}")
+            # Continue with project deletion even if graph cleanup fails
+
     success = ProjectManager.delete_project(project_id)
 
     if not success:
         return jsonify({
             "success": False,
-            "error": f"Project does not exist or deletion failed: {project_id}"
-        }), 404
+            "error": f"Project deletion failed: {project_id}"
+        }), 500
 
     return jsonify({
         "success": True,
